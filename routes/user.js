@@ -1,131 +1,289 @@
-const express = require("express")
-const router = express.Router() 
-const db = require("../config/db")
-const bcrypt = require("bcrypt")
-var jwt = require('jsonwebtoken')
-require('dotenv').config()
-const authJWT = require('../middlewares/jwt')
 
+import Avatar from '@mui/material/Avatar';
+import Box from '@mui/material/Box';
+import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
+import TextField from '@mui/material/TextField';
+import Button from '@mui/material/Button';
 
-// Route du signup
-router.post('/signup', (req, res) => {
-    let { username, email, password } = req.body
+import { useState, useEffect } from "react";
+import { useAuth } from "./context/AuthContext";
 
-    // Vérifier si l'email/username n'existent pas déjà en BDD auquel cas -> annulation et renvoie un message d'erreur
+import "./Profile.css";
 
-    // On déclare d'abord une requete SQL 
-    let sql = "SELECT * FROM users WHERE email = ? OR username = ?" 
+function Profile() {
+    const { user, setUser, token } = useAuth();
 
-    db.query(sql, [email, username], (error, results) => {
-        if (error) {
-            res.status(500).json("Erreur lors de la vérification du user")
-            console.log(error)
+    const [edit, setEdit] = useState(null);
+    const [loading, setLoading] = useState(false);
+    const [message, setMessage] = useState("");
 
-        } else if (results.length) {
-            console.log(results)
+    const [inputValue, setInputValue] = useState({
+        username: "",
+        email: "",
+        description: "",
+        avatar: null
+    });
 
-            // On vérifie qui du username ou de l'email est déjà utilisé
-            // et on renvoit une réponse selon
-            if (results[0].username === username) {
-                res.json("Username déjà utilisé")
-            } else {
-                res.json("Email déjà utilisé")
+    const [avatarPreview, setAvatarPreview] = useState("");
+
+    // Initialisation des informations utilisateur
+    useEffect(() => {
+        if (user) {
+            setInputValue({
+                username: user.username || "",
+                email: user.email || "",
+                description: user.description || "",
+                avatar: null
+            });
+
+            setAvatarPreview(user.avatar || "");
+        }
+    }, [user]);
+
+    // Activation / désactivation du mode édition
+    function handleChangeInfos(field) {
+        setEdit(edit === field ? null : field);
+    }
+
+    // Modification des champs
+    function handleInputChange(e) {
+        const { name, value } = e.target;
+
+        setInputValue(prev => ({
+            ...prev,
+            [name]: value
+        }));
+    }
+
+    // Gestion de l'upload de l'avatar
+    function handleAvatarChange(e) {
+        const file = e.target.files[0];
+
+        if (!file) return;
+
+        // Vérification du format
+        if (!file.type.startsWith("image/")) {
+            setMessage("Veuillez sélectionner une image.");
+            return;
+        }
+
+        // Vérification de la taille (5 Mo maximum)
+        if (file.size > 5 * 1024 * 1024) {
+            setMessage("L'image ne doit pas dépasser 5 Mo.");
+            return;
+        }
+
+        setInputValue(prev => ({
+            ...prev,
+            avatar: file
+        }));
+
+        // Aperçu de l'image sélectionnée
+        const previewUrl = URL.createObjectURL(file);
+
+        setAvatarPreview(previewUrl);
+        setMessage("");
+    }
+
+    // Enregistrement des modifications
+    async function handleSubmitProfile(e) {
+        e.preventDefault();
+
+        setLoading(true);
+        setMessage("");
+
+        try {
+            const formData = new FormData();
+
+            formData.append("username", inputValue.username);
+            formData.append("email", inputValue.email);
+            formData.append("description", inputValue.description);
+
+            // Envoi uniquement si un nouvel avatar a été sélectionné
+            if (inputValue.avatar) {
+                formData.append("avatar", inputValue.avatar);
             }
-        } else {
 
-            // Si pas de user en DB -> Hasher le mot de passe 
-            bcrypt.hash(password, 10, (err, hash) => {
-                if (err) {
-                    res.status(500).json("Erreur durant le hash du mot de passe")
-                    console.log(err)
-                } else {
-                    // On a maintenant accès au mot de passe hashé on peut donc ajouter le user en bdd 
-                    // On explicite la requete SQL
+            const response = await fetch(
+                "http://localhost:3000/user/profile",
+                {
+                    method: "PUT",
+                    headers: {
+                        Authorization: `Bearer ${token}`
+                    },
+                    body: formData
+                }
+            );
 
-                    sql = "INSERT INTO users(username, email, password) VALUES(?, ?, ?)"
+            const result = await response.json();
 
-                    // On éxecute la query SQL dans notre table users 
-                    db.query(sql, [username, email, hash], (err, results) => {
-                        if (err) {console.log(err)}
-                        else {
-                            res.status(200).json("User ajouté avec succès")
-                            console.log(results)
+            if (!response.ok) {
+                throw new Error(
+                    result.message || "Erreur lors de la modification"
+                );
+            }
+
+            // Mise à jour du contexte utilisateur
+            const updatedUser = {
+                ...user,
+                ...result.user
+            };
+
+            setUser(updatedUser);
+
+            // Mise à jour du chemin de l'avatar
+            setAvatarPreview(updatedUser.avatar || "");
+
+            // Réinitialisation du fichier sélectionné
+            setInputValue(prev => ({
+                ...prev,
+                avatar: null
+            }));
+
+            setMessage("Les modifications ont été enregistrées !");
+            setEdit(null);
+
+        } catch (err) {
+            console.error(err);
+            setMessage(
+                err.message || "Une erreur est survenue lors de la modification."
+            );
+
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    return (
+        <>
+            <h1>Page de profil</h1>
+
+            <Box
+                component="form"
+                onSubmit={handleSubmitProfile}
+                sx={{
+                    width: "45vw",
+                    padding: "2rem",
+                    border: "solid 1px lightgrey",
+                    margin: "auto",
+                    display: "flex",
+                    flexDirection: "column",
+                    borderRadius: "20px"
+                }}
+            >
+
+                {/* Avatar */}
+                <div>
+                    <Avatar
+                        sx={{
+                            width: "5rem",
+                            height: "5rem",
+                            margin: "auto"
+                        }}
+                        src={
+                            avatarPreview.startsWith("blob:")
+                                ? avatarPreview
+                                : avatarPreview
+                                    ? `http://localhost:3000${avatarPreview}`
+                                    : ""
                         }
-                    })
-                }
-            })
-        }
-    })
-})
+                        alt={user?.username || "Avatar"}
+                    />
 
-// Route pour le login 
-router.post('/login', (req, res) => {
-    // Récupération des éléments du body 
-    let { username, password } = req.body
+                    <input
+                        type="file"
+                        id="avatar-upload"
+                        name="avatar"
+                        accept="image/png, image/jpeg, image/webp"
+                        hidden
+                        onChange={handleAvatarChange}
+                    />
 
-    console.log(req.body)
+                    <label htmlFor="avatar-upload">
+                        <EditOutlinedIcon
+                            sx={{ cursor: "pointer" }}
+                        />
+                    </label>
+                </div>
 
-    let sql = "SELECT * FROM users WHERE username = ?"
+                {/* Username */}
+                <div className="profile-row">
+                    <h2>Username :</h2>
 
-    db.query(sql, [username], (err, results) => {
+                    {edit === "username" ? (
+                        <TextField
+                            name="username"
+                            variant="outlined"
+                            value={inputValue.username}
+                            onChange={handleInputChange}
+                        />
+                    ) : (
+                        <h2>{inputValue.username}</h2>
+                    )}
 
-        if (err) {
-            res.status(500).json("erreur lors de la vérification du username")
-            console.log(err)
+                    <EditOutlinedIcon
+                        onClick={() => handleChangeInfos("username")}
+                        sx={{ cursor: "pointer" }}
+                    />
+                </div>
 
-        } else if (results.length) {
+                {/* Email */}
+                <div className="profile-row">
+                    <h2>Email :</h2>
 
-            // Si ok on recup le hash depuis le résultat de la BDD
-            let hash = results[0].password
-            let user = results[0]
+                    {edit === "email" ? (
+                        <TextField
+                            name="email"
+                            variant="outlined"
+                            value={inputValue.email}
+                            onChange={handleInputChange}
+                        />
+                    ) : (
+                        <h2>{inputValue.email}</h2>
+                    )}
 
+                    <EditOutlinedIcon
+                        onClick={() => handleChangeInfos("email")}
+                        sx={{ cursor: "pointer" }}
+                    />
+                </div>
 
-            // On compare les hashs
-            bcrypt.compare(password, hash, (err, results) => {
-                if (err) {
-                    res.status(500).json("erreur lors de la comparaison des mdp")
-                    console.log(err)
-                } else if (results) {
+                {/* Description */}
+                <div className="profile-row">
+                    <h2>Description :</h2>
 
-                    // On crée l'access token -> le token court terme qui vient valider les actions du user
-                    const accessToken = jwt.sign(user , process.env.ACCESS_TOKEN_SECRET, { expiresIn: '120m'});
+                    {edit === "description" ? (
+                        <TextField
+                            name="description"
+                            variant="outlined"
+                            multiline
+                            value={inputValue.description}
+                            onChange={handleInputChange}
+                        />
+                    ) : (
+                        <h2>{inputValue.description}</h2>
+                    )}
 
-                    // On crée aussi le refresh token -> token long terme qui permet de renouveller les access token
-                    const refreshToken = jwt.sign(user , process.env.REFRESH_TOKEN_SECRET, { expiresIn: '10d'});
+                    <EditOutlinedIcon
+                        onClick={() => handleChangeInfos("description")}
+                        sx={{ cursor: "pointer" }}
+                    />
+                </div>
 
-                    // Le refresh token est envoyé dans un cookie en httpOnly -> On ne peut pas recup le token avec du JS depuis le front
-                    res.cookie('jwt', refreshToken, {
-                        httpOnly: true,
-                        sameSite: 'None', 
-                        secure: true,
-                        maxAge: 10 * 24 * 60 * 60 * 1000
-                    })
+                <Button
+                    type="submit"
+                    disabled={loading}
+                >
+                    {loading
+                        ? "Enregistrement..."
+                        : "Enregistrer les modifications"}
+                </Button>
 
-                    console.log(accessToken)
+                {message && <p>{message}</p>}
 
-                    // On renvoit l'access token simplement en json
-                    res.json(accessToken)
+            </Box>
+        </>
+    );
+}
 
-
-                } else {
-                    res.json("Le mot de passe n'est pas correct")
-                }
-            })
-        } else {
-            res.json({ message : "Pas de résultats pour le user donné" })
-        }
-    })
-})
-
-// Route pirate ....
-router.post('/pirate', (req, res) => {
-    let { body } = req
-    console.log(body)
-})
-
-router.post('/cart', authJWT, (req, res) => {
-
-})
-
-
-module.exports = router
+export default Profile;
